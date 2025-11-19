@@ -44,6 +44,14 @@
 #     --max-pst-gb 18 ^
 #     --pst-root "Imported (EML)"
 #
+#   # Use Gmail labels to organize into folders:
+#   python eml_to_pst_import_en_v3_3.py ^
+#     --src "D:\Export_EML" ^
+#     --out-dir "D:\PSTs" ^
+#     --base-name emails ^
+#     --pst-root "Imported" ^
+#     --use-gmail-labels
+#
 # Notes:
 #   - Windows Explorer may show PST as ~256 KB while Outlook has it open.
 #     The script closes PSTs at the end (and optionally does periodic flush).
@@ -190,6 +198,33 @@ def build_headers_text(raw_bytes):
         return hdr.decode("utf-8", errors="ignore")
     except Exception:
         return ""
+
+def parse_gmail_labels(msg):
+    """
+    Extract Gmail labels from X-Gmail-Labels header.
+    Returns a list of label strings (empty list if not present).
+    """
+    labels_header = msg.get("X-Gmail-Labels", "")
+    if not labels_header:
+        return []
+    # Gmail labels are comma-separated
+    labels = [lbl.strip() for lbl in labels_header.split(",") if lbl.strip()]
+    return labels
+
+def ensure_folder_path(root_folder, folder_path):
+    """
+    Ensure a folder path exists under root_folder.
+    folder_path can be a simple name or a slash-separated path like "Parent/Child".
+    Returns the deepest folder.
+    """
+    parts = [p.strip() for p in folder_path.split("/") if p.strip()]
+    current = root_folder
+    for part in parts:
+        try:
+            current = current.Folders.Item(part)
+        except Exception:
+            current = current.Folders.Add(part)
+    return current
 
 def create_mail_in_dest(dest_folder, msg, raw_headers_text):
     """
@@ -422,9 +457,10 @@ def main():
     ap.add_argument("--split-by", choices=["year"], default=None, help="Split by mail year (one PST per year)")
     ap.add_argument("--splits", type=int, default=None, help="Even-split into N PSTs by total bytes")
     ap.add_argument("--max-pst-gb", type=float, default=15.0, help="Max ~GB per PST before rotating part2/part3...")
-    ap.add_argument("--pst-root", default="Imported (EML)", help="Folder name inside each PST")
+    ap.add_argument("--pst-root", default="Imported (EML)", help="Folder name inside each PST (or root when using Gmail labels)")
     ap.add_argument("--flush-every", type=int, default=0, help="Detach/reattach PST every N items (0=off)")
     ap.add_argument("--count-every", type=int, default=200, help="Print folder Items.Count every N items (0=off)")
+    ap.add_argument("--use-gmail-labels", action="store_true", help="Use X-Gmail-Labels header to organize into folders; duplicates email if multiple labels")
     args = ap.parse_args()
 
     src = os.path.normpath(args.src)
@@ -487,28 +523,67 @@ def main():
                 current_pst = pst_path
                 print(f"\nCURRENT PST: {current_pst}")
 
-            # Ensure inner folder exists
-            try:
-                dest = root.Folders.Item(args.pst_root)
-            except Exception:
-                dest = root.Folders.Add(args.pst_root)
-
-            # Create item directly in destination folder, add attachments, save
-            try:
-                item = create_mail_in_dest(dest, msg, build_headers_text(raw))
-                add_attachments(item, msg, tmpdir)
-                item.Save()
-
-                # Safety: ensure the item actually resides in the target folder
+            # Determine target folders based on Gmail labels or default pst-root
+            target_folders = []
+            if args.use_gmail_labels:
+                gmail_labels = parse_gmail_labels(msg)
+                if gmail_labels:
+                    # Create folders based on Gmail labels (under pst_root)
+                    for label in gmail_labels:
+                        try:
+                            # Ensure base folder exists
+                            try:
+                                base_folder = root.Folders.Item(args.pst_root)
+                            except Exception:
+                                base_folder = root.Folders.Add(args.pst_root)
+                            
+                            # Create/get the label folder (supports nested paths like "Parent/Child")
+                            label_folder = ensure_folder_path(base_folder, label)
+                            target_folders.append(label_folder)
+                        except Exception as e:
+                            print(f"\n[WARN] Failed to create folder for label '{label}': {e}")
+                else:
+                    # No Gmail labels found, use default pst-root
+                    try:
+                        dest = root.Folders.Item(args.pst_root)
+                    except Exception:
+                        dest = root.Folders.Add(args.pst_root)
+                    target_folders.append(dest)
+            else:
+                # Standard mode: use pst-root
                 try:
-                    if item.Parent and item.Parent.EntryID != dest.EntryID:
-                        item = item.Move(dest)
-                        item.Save()
+                    dest = root.Folders.Item(args.pst_root)
                 except Exception:
-                    pass
+                    dest = root.Folders.Add(args.pst_root)
+                target_folders.append(dest)
 
-            except Exception as e:
-                print(f"\n[WARN] Failed to save item from {path}: {e}")
+            # Create item in first target folder, then copy references to others
+            if target_folders:
+                try:
+                    # Create the email in the first folder
+                    first_dest = target_folders[0]
+                    item = create_mail_in_dest(first_dest, msg, build_headers_text(raw))
+                    add_attachments(item, msg, tmpdir)
+                    item.Save()
+
+                    # Safety: ensure the item actually resides in the target folder
+                    try:
+                        if item.Parent and item.Parent.EntryID != first_dest.EntryID:
+                            item = item.Move(first_dest)
+                            item.Save()
+                    except Exception:
+                        pass
+
+                    # For additional folders, copy the item (creates a reference, not a duplicate)
+                    for idx in range(1, len(target_folders)):
+                        try:
+                            dest = target_folders[idx]
+                            item.Copy().Move(dest)
+                        except Exception as e:
+                            print(f"\n[WARN] Failed to copy item from {path} to folder #{idx+1}: {e}")
+
+                except Exception as e:
+                    print(f"\n[WARN] Failed to save item from {path}: {e}")
 
             processed += 1
             done_bytes += (sz or len(raw))
