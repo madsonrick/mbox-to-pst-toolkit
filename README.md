@@ -12,6 +12,7 @@ Export large `.mbox` mailboxes into filesystem `.eml` files and import them into
 ## Features
 
 **MBOX → EML**
+- Supports single `.mbox` files, directories with multiple `.mbox` files, or `.zip` archives
 - Layout: **year**, **month** (YYYY/MM), or **flat**
 - Year range filters (`--start-year`, `--end-year`)
 - Per-directory caps: **max files** or **max GB**
@@ -58,8 +59,23 @@ D:\PSTs                     # where .pst files will be created
 ## 1) Export MBOX → EML
 Script: mbox_to_eml_exporter.py
 
-## python mbox_to_eml_exporter.py ^
+## Single mbox file
+python mbox_to_eml_exporter.py ^
   --mbox "D:\Mail\inbox.mbox" ^
+  --out-dir "D:\Export_EML" ^
+  --layout month ^
+  --sanitize-filenames
+
+## Directory with multiple mbox files
+python mbox_to_eml_exporter.py ^
+  --mbox "D:\Mail\" ^
+  --out-dir "D:\Export_EML" ^
+  --layout month ^
+  --sanitize-filenames
+
+## Zip archive containing mbox files
+python mbox_to_eml_exporter.py ^
+  --mbox "D:\Mail\archive.zip" ^
   --out-dir "D:\Export_EML" ^
   --layout month ^
   --sanitize-filenames
@@ -71,13 +87,15 @@ Script: mbox_to_eml_exporter.py
 
 ## Year filters
 :: Only 2007–2016
-python mbox_to_eml_exporte.py --mbox "D:\Mail\inbox.mbox" --out-dir "D:\Export_EML" --layout year --start-year 2007 --end-year 2016
+python mbox_to_eml_exporter.py --mbox "D:\Mail\inbox.mbox" --out-dir "D:\Export_EML" --layout year --start-year 2007 --end-year 2016
 
-##Folder limits
+## Folder limits
 :: Cap folders at 50k files OR ~9 GB
 python mbox_to_eml_exporter.py --mbox "D:\Mail\inbox.mbox" --out-dir "D:\Export_EML" --layout month --max-per-dir 50000 --max-dir-bytes 9
 
 ## Flags (summary)
+--mbox PATH (single .mbox file, directory, or .zip archive)
+--out-dir PATH
 --layout {year,month,flat}
 --start-year N, --end-year N
 --max-per-dir N (files)
