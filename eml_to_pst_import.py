@@ -199,6 +199,15 @@ def build_headers_text(raw_bytes):
     except Exception:
         return ""
 
+def extract_read_status_from_filename(filename):
+    """Extract read/unread status from EML filename suffix. Returns True if READ, False if UNREAD, None if unknown."""
+    filename_upper = filename.upper()
+    if '_READ.EML' in filename_upper:
+        return True
+    elif '_UNREAD.EML' in filename_upper:
+        return False
+    return None
+
 def parse_gmail_labels(msg):
     """
     Extract Gmail labels from X-Gmail-Labels header.
@@ -226,13 +235,20 @@ def ensure_folder_path(root_folder, folder_path):
             current = current.Folders.Add(part)
     return current
 
-def create_mail_in_dest(dest_folder, msg, raw_headers_text):
+def create_mail_in_dest(dest_folder, msg, raw_headers_text, is_read=None):
     """
     Create MailItem directly in the target PST folder (avoids default Drafts).
     Return unsent MailItem (not submitted), already associated with `dest_folder`.
     """
     mail = dest_folder.Items.Add(0)  # 0 = olMailItem
     pa   = mail.PropertyAccessor
+    
+    # Set read/unread status if provided
+    if is_read is not None:
+        try:
+            mail.UnRead = not is_read  # UnRead=True means unread, UnRead=False means read
+        except Exception:
+            pass
 
     # Raw headers first (helps with PR_TRANSPORT_MESSAGE_HEADERS)
     if raw_headers_text:
@@ -523,6 +539,9 @@ def main():
                 current_pst = pst_path
                 print(f"\nCURRENT PST: {current_pst}")
 
+            # Extract read status from filename
+            is_read = extract_read_status_from_filename(os.path.basename(path))
+            
             # Determine target folders based on Gmail labels or default pst-root
             target_folders = []
             if args.use_gmail_labels:
@@ -562,7 +581,7 @@ def main():
                 try:
                     # Create the email in the first folder
                     first_dest = target_folders[0]
-                    item = create_mail_in_dest(first_dest, msg, build_headers_text(raw))
+                    item = create_mail_in_dest(first_dest, msg, build_headers_text(raw), is_read)
                     add_attachments(item, msg, tmpdir)
                     item.Save()
 
